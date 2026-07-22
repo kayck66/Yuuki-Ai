@@ -165,7 +165,6 @@ function startEditMessage(row, wrap, originalText){
         addMessage('yuuki', 'Não consegui editar essa mensagem: ' + data.error);
         return;
       }
-      // remove esta linha e tudo que vem depois dela na tela
       let node = row;
       while(node){
         const next = node.nextSibling;
@@ -282,7 +281,10 @@ async function sendMessage(){
 
 sendBtn.addEventListener('click', sendMessage);
 input.addEventListener('keydown', e => {
-  if(e.key === 'Enter') sendMessage();
+  if(e.key === 'Enter' && !e.shiftKey){
+    e.preventDefault();
+    sendMessage();
+  }
 });
 
 // ==================== UPLOAD DE ARQUIVO ====================
