@@ -281,10 +281,7 @@ async function sendMessage(){
 
 sendBtn.addEventListener('click', sendMessage);
 input.addEventListener('keydown', e => {
-  if(e.key === 'Enter' && !e.shiftKey){
-    e.preventDefault();
-    sendMessage();
-  }
+  if(e.key === 'Enter') sendMessage();
 });
 
 // ==================== UPLOAD DE ARQUIVO ====================
@@ -332,150 +329,7 @@ drawerOverlay.addEventListener('click', closeDrawer);
 
 // ==================== CONVERSAS (nova / lista / busca / trocar) ====================
 
-const MENU_DOTS_SVG = `<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>`;
-const SHARE_SVG = `<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18 16.08a3 3 0 0 0-2.11.87L8.91 12.7a3 3 0 0 0 0-1.4l6.98-4.25A3 3 0 1 0 15 5a3 3 0 0 0 .05.55L8.07 9.8a3 3 0 1 0 0 4.4l6.98 4.25A3 3 0 1 0 18 16.08z"/></svg>`;
-const PIN_SVG = `<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 3l5 5-3.5 3.5L19 14l-1.4 1.4-3.1-3.1-3.9 3.9V21h-1.2l-.5-5.2L5 12.7l1.4-1.4 3.1 3.1 3.9-3.9-3.1-3.1L11.7 6l1.9 1.9L16 3z"/></svg>`;
-const RENAME_SVG = `<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L20.81 6.94l-3.75-3.75L3 17.25z"/></svg>`;
-const NOTEBOOK_SVG = `<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h13v-2H6v-1h13V4H6zm0 2h2v9l-1-.75L6 13V4z"/></svg>`;
-const TRASH_SVG = `<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2zm-2 6h10l-1 12H8L7 9z"/></svg>`;
-
-let openMenuEl = null;
-
-function closeConversationMenu(){
-  if(openMenuEl){
-    openMenuEl.remove();
-    openMenuEl = null;
-  }
-  document.querySelectorAll('.conversation-item.menu-open').forEach(el => el.classList.remove('menu-open'));
-}
-document.addEventListener('click', (e) => {
-  if(openMenuEl && !openMenuEl.contains(e.target) && !e.target.closest('.conversation-menu-btn')){
-    closeConversationMenu();
-  }
-});
-
-function openConversationMenu(anchorBtn, item, conv){
-  closeConversationMenu();
-  item.classList.add('menu-open');
-
-  const menu = document.createElement('div');
-  menu.className = 'conversation-menu';
-
-  const rect = anchorBtn.getBoundingClientRect();
-  menu.style.top = `${rect.bottom + 4}px`;
-  menu.style.left = `${Math.max(8, rect.right - 210)}px`;
-
-  const opcoes = [
-    { label: 'Exportar conversa', icon: SHARE_SVG, action: () => exportConversation(conv) },
-    { label: conv.fixado ? 'Desafixar' : 'Fixar', icon: PIN_SVG, action: () => togglePinConversation(conv, item) },
-    { label: 'Renomear', icon: RENAME_SVG, action: () => renameConversationInline(item, conv) },
-    { label: 'Adicionar ao notebook', icon: NOTEBOOK_SVG, disabled: true, title: 'Notebooks ainda não implementado nesta versão' },
-    { divider: true },
-    { label: 'Excluir', icon: TRASH_SVG, danger: true, action: () => deleteConversation(conv) },
-  ];
-
-  opcoes.forEach(op => {
-    if(op.divider){
-      const div = document.createElement('div');
-      div.className = 'conversation-menu-divider';
-      menu.appendChild(div);
-      return;
-    }
-    const btn = document.createElement('button');
-    btn.className = 'conversation-menu-item' + (op.danger ? ' danger' : '') + (op.disabled ? ' disabled' : '');
-    btn.innerHTML = op.icon + `<span>${op.label}</span>`;
-    if(op.title) btn.title = op.title;
-    if(!op.disabled){
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        closeConversationMenu();
-        op.action();
-      });
-    }
-    menu.appendChild(btn);
-  });
-
-  document.body.appendChild(menu);
-  openMenuEl = menu;
-}
-
-async function togglePinConversation(conv, item){
-  try{
-    const res = await fetch(`/api/conversations/${conv.id}/pin`, { method: 'POST' });
-    const data = await res.json();
-    if(!data.error) await loadConversationList();
-  } catch(err){
-    console.error('Falha ao fixar conversa', err);
-  }
-}
-
-function renameConversationInline(item, conv){
-  const titleEl = item.querySelector('.conversation-title');
-  const input = document.createElement('input');
-  input.className = 'conversation-rename-input';
-  input.value = conv.titulo;
-  titleEl.replaceWith(input);
-  input.focus();
-  input.select();
-
-  const confirmar = async () => {
-    const novoTitulo = input.value.trim();
-    if(novoTitulo && novoTitulo !== conv.titulo){
-      try{
-        await fetch(`/api/conversations/${conv.id}`, {
-          method: 'PATCH',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({titulo: novoTitulo})
-        });
-      } catch(err){
-        console.error('Falha ao renomear', err);
-      }
-    }
-    loadConversationList();
-  };
-
-  input.addEventListener('keydown', (e) => {
-    if(e.key === 'Enter') input.blur();
-    if(e.key === 'Escape'){ input.value = conv.titulo; input.blur(); }
-  });
-  input.addEventListener('blur', confirmar);
-}
-
-async function exportConversation(conv){
-  try{
-    const res = await fetch(`/api/conversations/${conv.id}/messages`);
-    const data = await res.json();
-    const linhas = (data.messages || [])
-      .filter(m => !m.content.startsWith('[ARQUIVO]'))
-      .map(m => `${m.role === 'user' ? 'Você' : 'Yuuki'}: ${m.content}`);
-    const texto = `${conv.titulo}\n\n${linhas.join('\n\n')}`;
-    await navigator.clipboard.writeText(texto);
-    addMessage('yuuki', `Copiei a conversa "${conv.titulo}" pra sua área de transferência, querido. ✨`);
-  } catch(err){
-    addMessage('yuuki', 'Não consegui exportar essa conversa.');
-  }
-}
-
-async function deleteConversation(conv){
-  const confirmado = confirm(`Excluir a conversa "${conv.titulo}"? Isso não pode ser desfeito.`);
-  if(!confirmado) return;
-
-  try{
-    await fetch(`/api/conversations/${conv.id}`, { method: 'DELETE' });
-    if(conv.id === currentConversationId){
-      setConversationId(null);
-      messagesEl.innerHTML = '';
-      emptyState.style.display = 'block';
-      setEngineStatus(null);
-    }
-    loadConversationList();
-  } catch(err){
-    console.error('Falha ao excluir conversa', err);
-  }
-}
-
 function renderConversationList(filtro = ''){
-  closeConversationMenu();
   conversationList.innerHTML = '';
   const termo = filtro.trim().toLowerCase();
   const filtradas = termo
@@ -491,27 +345,10 @@ function renderConversationList(filtro = ''){
 
   filtradas.forEach(conv => {
     const item = document.createElement('div');
-    item.className = 'conversation-item'
-      + (conv.id === currentConversationId ? ' active' : '')
-      + (conv.fixado ? ' pinned' : '');
-
-    const title = document.createElement('span');
-    title.className = 'conversation-title';
-    title.textContent = conv.titulo;
-    title.title = conv.titulo;
-    title.addEventListener('click', () => switchConversation(conv.id));
-
-    const menuBtn = document.createElement('button');
-    menuBtn.className = 'conversation-menu-btn';
-    menuBtn.innerHTML = MENU_DOTS_SVG;
-    menuBtn.title = 'Mais opções';
-    menuBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openConversationMenu(menuBtn, item, conv);
-    });
-
-    item.appendChild(title);
-    item.appendChild(menuBtn);
+    item.className = 'conversation-item' + (conv.id === currentConversationId ? ' active' : '');
+    item.textContent = conv.titulo;
+    item.title = conv.titulo;
+    item.addEventListener('click', () => switchConversation(conv.id));
     conversationList.appendChild(item);
   });
 }
