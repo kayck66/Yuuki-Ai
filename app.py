@@ -101,11 +101,12 @@ def get_conn():
             timestamp TEXT
         )"""
     )
+    # Migração: se o banco já existia antes da coluna 'fixado' existir, adiciona agora.
     try:
         conn.execute("ALTER TABLE conversas ADD COLUMN fixado INTEGER DEFAULT 0")
         conn.commit()
     except sqlite3.OperationalError:
-        pass
+        pass  # coluna já existe
     conn.commit()
     return conn
 
@@ -169,6 +170,7 @@ def alternar_fixado(conv_id):
 
 
 def atualizar_titulo_se_necessario(conv_id, primeira_mensagem):
+    """Na primeira mensagem de uma conversa, gera um título curto a partir dela."""
     titulo = primeira_mensagem.strip().replace("\n", " ")
     if len(titulo) > 42:
         titulo = titulo[:42].rstrip() + "..."
@@ -215,6 +217,9 @@ def salvar_mensagem(conv_id, role, content):
 
 
 def truncar_a_partir_de(msg_id):
+    """Apaga a mensagem msg_id e tudo que veio depois dela na mesma conversa
+    (usado quando o usuário edita uma mensagem antiga: a partir dali, a
+    conversa é reconstruída com o texto novo)."""
     conn = get_conn()
     row = conn.execute("SELECT conversation_id FROM mensagens WHERE id = ?", (msg_id,)).fetchone()
     if not row:
@@ -258,8 +263,7 @@ def preparar_historico_para_api(historico_completo):
         tokens_msg = estimar_tokens(msg["content"])
         if tokens_usados + tokens_msg > MAX_TOKENS_API:
             break
-        role_map = "model" if msg["role"] == "assistant" else msg["role"]
-        mensagens.insert(0, {"role": role_map, "content": msg["content"]})
+        mensagens.insert(0, {"role": msg["role"], "content": msg["content"]})
         tokens_usados += tokens_msg
 
     return mensagens
@@ -367,9 +371,7 @@ def chamar_groq(historico_completo):
         raise RuntimeError("Groq não configurado")
 
     mensagens_api = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for m in preparar_historico_para_api(historico_completo):
-        role = "assistant" if m["role"] == "model" else m["role"]
-        mensagens_api.append({"role": role, "content": m["content"]})
+    mensagens_api.extend(preparar_historico_para_api(historico_completo))
 
     completion = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -382,30 +384,20 @@ def chamar_groq(historico_completo):
     return resposta
 
 
-def chamar_gemini(historico_completo):
+def chamar_gemini(user_input):
     if not gemini_client:
         raise RuntimeError("Gemini não configurado")
 
-    mensagens_preparadas = preparar_historico_para_api(historico_completo)
-    
-    # Prepara o formato do conteúdo com histórico para a SDK google-genai
-    contents = []
-    for msg in mensagens_preparadas:
-        role = "model" if msg["role"] == "assistant" else msg["role"]
-        contents.append({"role": role, "parts": [{"text": msg["content"]}]})
-
     response = gemini_client.models.generate_content(
         model="gemini-2.5-flash",
-        contents=contents,
+        contents=user_input,
         config={
             "system_instruction": SYSTEM_PROMPT,
             "temperature": 0.7,
             "max_output_tokens": 800,
         },
     )
-    resposta = response.text.strip()
-    estado["tokens_usados"] += estimar_tokens(resposta) + 500
-    return resposta
+    return response.text.strip()
 
 
 # ==================== ROTAS ====================
@@ -496,9 +488,10 @@ def api_chat():
             "tokens_limite": estado["tokens_limite"],
         })
 
+    # Gemini primeiro (mais capaz), Groq como reserva se o Gemini falhar.
     engine_usado = "gemini"
     try:
-        resposta_ia = chamar_gemini(historico)
+        resposta_ia = chamar_gemini(user_input)
     except Exception as e:
         print(f"[GEMINI] fallback -> Groq ({e})")
         engine_usado = "groq"
@@ -527,6 +520,9 @@ def api_chat():
 
 @app.route("/api/messages/<int:msg_id>/truncate", methods=["DELETE"])
 def api_truncate_message(msg_id):
+    """Apaga essa mensagem e todas as que vieram depois na mesma conversa.
+    Usado quando o usuário EDITA uma mensagem antiga: a conversa é
+    reconstruída a partir dali com o texto novo (via /api/chat de novo)."""
     conv_id = truncar_a_partir_de(msg_id)
     if not conv_id:
         return jsonify({"error": "mensagem não encontrada"}), 404
