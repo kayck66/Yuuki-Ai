@@ -20,6 +20,16 @@ const searchInput = document.getElementById('searchInput');
 const conversationList = document.getElementById('conversationList');
 const conversationEmpty = document.getElementById('conversationEmpty');
 
+function getDeviceId(){
+  let id = localStorage.getItem('yuuki_device_id');
+  if(!id){
+    id = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    localStorage.setItem('yuuki_device_id', id);
+  }
+  return id;
+}
+const DEVICE_ID = getDeviceId();
+
 const CORE_SVG = `
   <svg viewBox="0 0 24 24" class="core-svg"><circle class="ring ring-outer" cx="12" cy="12" r="10.2"/><circle class="ring ring-mid" cx="12" cy="12" r="7"/><circle class="ring ring-inner" cx="12" cy="12" r="3.2"/></svg>
 `;
@@ -159,7 +169,11 @@ function startEditMessage(row, wrap, originalText){
     cancelBtn.disabled = true;
 
     try{
-      const res = await fetch(`/api/messages/${msgId}/truncate`, { method: 'DELETE' });
+      const res = await fetch(`/api/messages/${msgId}/truncate`, {
+        method: 'DELETE',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({device_id: DEVICE_ID})
+      });
       const data = await res.json();
       if(data.error){
         addMessage('yuuki', 'Não consegui editar essa mensagem: ' + data.error);
@@ -247,7 +261,7 @@ async function sendMessage(){
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: text, conversation_id: currentConversationId})
+      body: JSON.stringify({message: text, conversation_id: currentConversationId, device_id: DEVICE_ID})
     });
     const data = await res.json();
 
@@ -292,6 +306,7 @@ fileInput.addEventListener('change', async () => {
 
   const form = new FormData();
   form.append('file', file);
+  form.append('device_id', DEVICE_ID);
   if(currentConversationId) form.append('conversation_id', currentConversationId);
 
   try{
@@ -398,7 +413,11 @@ function openConversationMenu(anchorBtn, item, conv){
 
 async function togglePinConversation(conv, item){
   try{
-    const res = await fetch(`/api/conversations/${conv.id}/pin`, { method: 'POST' });
+    const res = await fetch(`/api/conversations/${conv.id}/pin`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({device_id: DEVICE_ID})
+    });
     const data = await res.json();
     if(!data.error) await loadConversationList();
   } catch(err){
@@ -422,7 +441,7 @@ function renameConversationInline(item, conv){
         await fetch(`/api/conversations/${conv.id}`, {
           method: 'PATCH',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({titulo: novoTitulo})
+          body: JSON.stringify({titulo: novoTitulo, device_id: DEVICE_ID})
         });
       } catch(err){
         console.error('Falha ao renomear', err);
@@ -440,7 +459,7 @@ function renameConversationInline(item, conv){
 
 async function exportConversation(conv){
   try{
-    const res = await fetch(`/api/conversations/${conv.id}/messages`);
+    const res = await fetch(`/api/conversations/${conv.id}/messages?device_id=${DEVICE_ID}`);
     const data = await res.json();
     const linhas = (data.messages || [])
       .filter(m => !m.content.startsWith('[ARQUIVO]'))
@@ -458,7 +477,7 @@ async function deleteConversation(conv){
   if(!confirmado) return;
 
   try{
-    await fetch(`/api/conversations/${conv.id}`, { method: 'DELETE' });
+    await fetch(`/api/conversations/${conv.id}?device_id=${DEVICE_ID}`, { method: 'DELETE' });
     if(conv.id === currentConversationId){
       setConversationId(null);
       messagesEl.innerHTML = '';
@@ -515,7 +534,7 @@ function renderConversationList(filtro = ''){
 
 async function loadConversationList(){
   try{
-    const res = await fetch('/api/conversations');
+    const res = await fetch(`/api/conversations?device_id=${DEVICE_ID}`);
     const data = await res.json();
     allConversations = data.conversations || [];
     renderConversationList(searchInput.value);
@@ -530,7 +549,7 @@ async function switchConversation(id){
   emptyState.style.display = 'none';
 
   try{
-    const res = await fetch(`/api/conversations/${id}/messages`);
+    const res = await fetch(`/api/conversations/${id}/messages?device_id=${DEVICE_ID}`);
     const data = await res.json();
     (data.messages || []).forEach(msg => {
       if(msg.content.startsWith('[ARQUIVO]')) return;
