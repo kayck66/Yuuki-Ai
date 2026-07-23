@@ -342,19 +342,67 @@ html,body{
   border-radius:16px;
   font-size:14.5px;
   line-height:1.55;
-  white-space:pre-wrap;
 }
 .msg-row.yuuki .msg-bubble{
   background:rgba(255,255,255,0.02);
   border:1px solid var(--border);
   color:var(--text);
   border-top-left-radius:4px;
+  max-width:88%;
 }
 .msg-row.user .msg-bubble{
   background:var(--panel-2);
   border:1px solid rgba(255,255,255,0.05);
   color:var(--text);
   border-top-right-radius:4px;
+  white-space:pre-wrap;
+}
+
+/* ---- Conteúdo markdown renderizado (só nas respostas da Yuuki) ---- */
+.msg-bubble .md-p{
+  margin:0 0 10px;
+  white-space:pre-wrap;
+}
+.msg-bubble .md-p:last-child{ margin-bottom:0; }
+
+.msg-bubble .md-spacer{ height:4px; }
+.msg-bubble .md-spacer:last-child{ display:none; }
+
+.msg-bubble .md-heading{
+  font-family:var(--font-display);
+  font-weight:600;
+  color:var(--text);
+  line-height:1.35;
+  margin:16px 0 8px;
+  letter-spacing:0.01em;
+}
+.msg-bubble .md-heading:first-child{ margin-top:0; }
+.msg-bubble h3.md-heading{ font-size:16.5px; }
+.msg-bubble h4.md-heading{ font-size:15px; }
+.msg-bubble h5.md-heading, .msg-bubble h6.md-heading{ font-size:14.5px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em; }
+
+.msg-bubble .md-list{
+  margin:2px 0 12px;
+  padding-left:22px;
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+}
+.msg-bubble .md-list:last-child{ margin-bottom:0; }
+.msg-bubble .md-list li{ padding-left:2px; }
+.msg-bubble ul.md-list li::marker{ color:var(--core-cyan); }
+.msg-bubble ol.md-list li::marker{ color:var(--core-cyan); font-family:var(--font-mono); }
+
+.msg-bubble strong{ color:var(--text); font-weight:650; }
+.msg-bubble em{ font-style:italic; color:var(--text); }
+.msg-bubble code{
+  font-family:var(--font-mono);
+  font-size:0.88em;
+  background:rgba(77,232,255,0.08);
+  border:1px solid var(--border);
+  border-radius:5px;
+  padding:1.5px 6px;
+  color:var(--core-cyan);
 }
 
 .msg-name{
