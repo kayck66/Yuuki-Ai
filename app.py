@@ -1,9 +1,3 @@
-"""
-YUUKI WEB CORE
-Backend Flask que expõe a assistente Yuuki como uma aplicação web,
-com suporte a múltiplas conversas (nova conversa / histórico / busca).
-"""
-
 import os
 import re
 import uuid
