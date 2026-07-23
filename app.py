@@ -1,3 +1,20 @@
+"""
+YUUKI WEB CORE
+Backend Flask que expõe a assistente Yuuki como uma aplicação web local,
+com suporte a múltiplas conversas (nova conversa / histórico / busca).
+
+Como rodar:
+    1. pip install -r requirements.txt
+    2. copie .env.example para .env e preencha suas chaves (NUNCA coloque a chave direto no código)
+    3. python app.py
+    4. abra http://127.0.0.1:5000 no navegador (ou http://SEU_IP_LOCAL:5000 no celular, mesma Wi-Fi)
+
+Segurança:
+    - As chaves de API só existem em variáveis de ambiente (.env), nunca no código-fonte.
+    - A ação "abrir programa" só executa no computador onde este servidor Flask está rodando.
+      Não exponha este servidor na internet sem autenticação.
+"""
+
 import os
 import re
 import uuid
