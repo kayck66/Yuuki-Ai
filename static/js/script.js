@@ -66,6 +66,68 @@ function updateTokenBar(usados, limite){
   tokenText.textContent = `${usados.toLocaleString('pt-BR')} / ${limite.toLocaleString('pt-BR')} tokens`;
 }
 
+// ==================== RENDERIZAÇÃO DE MARKDOWN ====================
+// Converte markdown simples (negrito, títulos, listas) em HTML seguro.
+// Escapamos o texto primeiro (evita XSS) e só depois aplicamos as tags.
+
+function escapeHtml(text){
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function renderMarkdown(text){
+  let escaped = escapeHtml(text);
+  const linhas = escaped.split('\n');
+  const partes = [];
+  let listaAberta = null; // 'ul' | 'ol' | null
+
+  const fecharLista = () => {
+    if(listaAberta){
+      partes.push(listaAberta === 'ul' ? '</ul>' : '</ol>');
+      listaAberta = null;
+    }
+  };
+
+  for(let linha of linhas){
+    const linhaTrim = linha.trim();
+
+    const tituloMatch = linhaTrim.match(/^(#{1,4})\s+(.*)/);
+    const bulletMatch = linhaTrim.match(/^[-*]\s+(.*)/);
+    const numeradaMatch = linhaTrim.match(/^\d+[.)]\s+(.*)/);
+
+    const aplicarInline = (s) => {
+      // negrito **texto**
+      s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      // itálico *texto* (só quando não faz parte de **)
+      s = s.replace(/(^|[^*])\*([^*]+)\*([^*]|$)/g, '$1<em>$2</em>$3');
+      // código `texto`
+      s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+      return s;
+    };
+
+    if(tituloMatch){
+      fecharLista();
+      const nivel = Math.min(tituloMatch[1].length + 2, 6); // h3..h6
+      partes.push(`<h${nivel} class="md-heading">${aplicarInline(tituloMatch[2])}</h${nivel}>`);
+    } else if(bulletMatch){
+      if(listaAberta !== 'ul'){ fecharLista(); partes.push('<ul class="md-list">'); listaAberta = 'ul'; }
+      partes.push(`<li>${aplicarInline(bulletMatch[1])}</li>`);
+    } else if(numeradaMatch){
+      if(listaAberta !== 'ol'){ fecharLista(); partes.push('<ol class="md-list">'); listaAberta = 'ol'; }
+      partes.push(`<li>${aplicarInline(numeradaMatch[1])}</li>`);
+    } else if(linhaTrim === ''){
+      fecharLista();
+      partes.push('<div class="md-spacer"></div>');
+    } else {
+      fecharLista();
+      partes.push(`<p class="md-p">${aplicarInline(linha)}</p>`);
+    }
+  }
+  fecharLista();
+  return partes.join('');
+}
+
 function addMessage(role, text, id = null){
   emptyState.style.display = 'none';
   const row = document.createElement('div');
@@ -95,7 +157,14 @@ function buildMessageContent(wrap, role, text){
 
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
-  bubble.textContent = text;
+  if(role === 'user'){
+    // Mensagens do usuário ficam como texto puro (não precisam de formatação
+    // e evita qualquer ambiguidade sobre o que o usuário "quis dizer" com * ou #).
+    bubble.textContent = text;
+  } else {
+    // Respostas da Yuuki são renderizadas como markdown (negrito, títulos, listas).
+    bubble.innerHTML = renderMarkdown(text);
+  }
 
   const actions = document.createElement('div');
   actions.className = 'msg-actions';
@@ -139,7 +208,7 @@ function copyMessageText(text, btn){
 function startEditMessage(row, wrap, originalText){
   const msgId = row.dataset.msgId;
   if(!msgId){
-    addMessage('yuuki', 'Espera a resposta terminar antes de editar essa mensagem, querido.');
+    addMessage('yuuki', 'Espera a resposta terminar antes de editar essa mensagem.');
     return;
   }
 
@@ -318,7 +387,7 @@ fileInput.addEventListener('change', async () => {
       if(data.conversation_id && data.conversation_id !== currentConversationId){
         setConversationId(data.conversation_id);
       }
-      addMessage('yuuki', `Arquivo "${data.nome}" recebido, senhor. Já está no meu contexto. ✨`);
+      addMessage('yuuki', `Arquivo "${data.nome}" recebido. Já está no meu contexto.`);
       loadConversationList();
     }
   } catch(err){
@@ -466,7 +535,7 @@ async function exportConversation(conv){
       .map(m => `${m.role === 'user' ? 'Você' : 'Yuuki'}: ${m.content}`);
     const texto = `${conv.titulo}\n\n${linhas.join('\n\n')}`;
     await navigator.clipboard.writeText(texto);
-    addMessage('yuuki', `Copiei a conversa "${conv.titulo}" pra sua área de transferência, querido. ✨`);
+    addMessage('yuuki', `Copiei a conversa "${conv.titulo}" pra sua área de transferência.`);
   } catch(err){
     addMessage('yuuki', 'Não consegui exportar essa conversa.');
   }
