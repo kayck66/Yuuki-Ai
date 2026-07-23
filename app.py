@@ -1,18 +1,7 @@
 """
 YUUKI WEB CORE
-Backend Flask que expõe a assistente Yuuki como uma aplicação web local,
+Backend Flask que expõe a assistente Yuuki como uma aplicação web,
 com suporte a múltiplas conversas (nova conversa / histórico / busca).
-
-Como rodar:
-    1. pip install -r requirements.txt
-    2. copie .env.example para .env e preencha suas chaves (NUNCA coloque a chave direto no código)
-    3. python app.py
-    4. abra http://127.0.0.1:5000 no navegador (ou http://SEU_IP_LOCAL:5000 no celular, mesma Wi-Fi)
-
-Segurança:
-    - As chaves de API só existem em variáveis de ambiente (.env), nunca no código-fonte.
-    - A ação "abrir programa" só executa no computador onde este servidor Flask está rodando.
-      Não exponha este servidor na internet sem autenticação.
 """
 
 import os
@@ -22,6 +11,7 @@ import sqlite3
 import subprocess
 import threading
 import webbrowser
+import urllib.parse
 import requests
 from datetime import datetime
 
@@ -35,6 +25,13 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY", "")
 GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID", "")
+
+# ==================== DETECÇÃO DE AMBIENTE ====================
+# O Render (e a maioria dos serviços de nuvem) define a variável RENDER
+# automaticamente no ambiente. Usamos isso pra saber se estamos rodando
+# localmente (onde dá pra abrir programas de verdade) ou na nuvem (onde só
+# dá pra abrir coisas no NAVEGADOR do usuário, nunca programas no PC dele).
+RODANDO_NA_NUVEM = bool(os.environ.get("RENDER")) or bool(os.environ.get("RENDER_SERVICE_ID"))
 
 groq_client = None
 gemini_client = None
@@ -76,8 +73,8 @@ SYSTEM_PROMPT = (
     "- Não seja fofa - seja sofisticada\n"
     "- Use POUCOS emojis: ✨ 💋 ⚡ 🎯 💅\n\n"
     "AÇÕES (use APENAS se pedido explicitamente pelo usuário, e emita o texto EXATO entre colchetes):\n"
-    "- [ACAO: run: <nome do programa>] — abre um programa/app no computador do usuário. Use o nome comum "
-    "(ex: calculadora, bloco de notas, whatsapp, word, chrome, discord, spotify).\n"
+    "- [ACAO: run: <nome do programa>] — abre um programa/app (versão local ou web, dependendo de onde eu "
+    "estiver rodando). Use o nome comum (ex: calculadora, bloco de notas, whatsapp, word, chrome, discord, spotify).\n"
     "- [ACAO: google: <termo>] — abre a PÁGINA DE RESULTADOS do Google pra esse termo (use quando o usuário só "
     "quer pesquisar, sem pedir pra abrir um link específico).\n"
     "- [ACAO: abrirlink: <termo>] — pesquisa e abre DIRETAMENTE o primeiro link/site encontrado. Use SOMENTE "
@@ -99,11 +96,9 @@ estado = {
     "tokens_limite": 100000,
 }
 
-# Aliases conhecidos -> executável/comando real. Nomes que não estiverem aqui
-# ainda são tentados (best-effort) via 'start', mas sem garantia de sucesso —
-# só funciona se o app estiver no PATH do Windows ou registrado como App Path.
+# Apps que só existem como programa nativo no Windows: só funcionam quando
+# o Flask está rodando LOCALMENTE no seu PC (subprocess abre nessa máquina).
 PROGRAMAS = {
-    # sistema
     "calculadora": "calc.exe", "calc": "calc.exe",
     "bloco de notas": "notepad.exe", "notepad": "notepad.exe", "bloco": "notepad.exe",
     "paint": "mspaint.exe", "pintura": "mspaint.exe",
@@ -113,28 +108,55 @@ PROGRAMAS = {
     "painel de controle": "control.exe",
     "gerenciador de tarefas": "taskmgr.exe", "task manager": "taskmgr.exe",
     "configuracoes": "start ms-settings:", "configurações": "start ms-settings:",
-    # navegadores
     "chrome": "chrome.exe", "google chrome": "chrome.exe",
     "edge": "msedge.exe", "microsoft edge": "msedge.exe",
     "firefox": "firefox.exe", "mozilla": "firefox.exe",
-    # produtividade
     "word": "winword.exe", "microsoft word": "winword.exe",
     "excel": "excel.exe", "microsoft excel": "excel.exe",
     "powerpoint": "powerpnt.exe", "microsoft powerpoint": "powerpnt.exe",
     "vscode": "Code.exe", "visual studio code": "Code.exe", "vs code": "Code.exe",
-    # comunicação
     "discord": "Discord.exe",
     "whatsapp": "WhatsApp.exe",
     "telegram": "Telegram.exe",
     "zoom": "Zoom.exe",
     "teams": "Teams.exe", "microsoft teams": "Teams.exe",
     "skype": "Skype.exe",
-    # mídia / outros
     "spotify": "Spotify.exe",
     "vlc": "vlc.exe",
     "steam": "Steam.exe",
     "obs": "obs64.exe",
     "photoshop": "Photoshop.exe",
+}
+
+# Quando estamos na NUVEM (Render), não dá pra abrir programa nenhum no PC
+# do usuário — então, pros apps que têm versão web, abrimos essa versão
+# direto no navegador dele.
+PROGRAMAS_WEB = {
+    "whatsapp": "https://web.whatsapp.com",
+    "discord": "https://discord.com/app",
+    "spotify": "https://open.spotify.com",
+    "telegram": "https://web.telegram.org",
+    "teams": "https://teams.microsoft.com", "microsoft teams": "https://teams.microsoft.com",
+    "zoom": "https://zoom.us/join",
+    "word": "https://www.office.com/launch/word", "microsoft word": "https://www.office.com/launch/word",
+    "excel": "https://www.office.com/launch/excel", "microsoft excel": "https://www.office.com/launch/excel",
+    "powerpoint": "https://www.office.com/launch/powerpoint",
+    "gmail": "https://mail.google.com",
+    "outlook": "https://outlook.com",
+    "drive": "https://drive.google.com", "google drive": "https://drive.google.com",
+    "netflix": "https://www.netflix.com",
+    "notion": "https://www.notion.so",
+    "canva": "https://www.canva.com",
+    "figma": "https://www.figma.com",
+    "github": "https://github.com",
+    "chatgpt": "https://chat.openai.com",
+    "twitter": "https://x.com", "x": "https://x.com",
+    "instagram": "https://www.instagram.com",
+    "facebook": "https://www.facebook.com",
+    "linkedin": "https://www.linkedin.com",
+    "youtube": "https://www.youtube.com",
+    "chrome": "https://www.google.com",
+    "vscode": "https://vscode.dev", "visual studio code": "https://vscode.dev", "vs code": "https://vscode.dev",
 }
 
 
@@ -161,7 +183,6 @@ def get_conn():
             timestamp TEXT
         )"""
     )
-    # Migrações: se o banco já existia antes dessas colunas existirem, adiciona agora.
     for coluna_sql in (
         "ALTER TABLE conversas ADD COLUMN fixado INTEGER DEFAULT 0",
         "ALTER TABLE conversas ADD COLUMN device_id TEXT",
@@ -170,7 +191,7 @@ def get_conn():
             conn.execute(coluna_sql)
             conn.commit()
         except sqlite3.OperationalError:
-            pass  # coluna já existe
+            pass
     conn.commit()
     return conn
 
@@ -189,8 +210,6 @@ def criar_conversa(device_id, titulo="Nova conversa"):
 
 
 def conversa_pertence_ao_device(conv_id, device_id):
-    """Confere se essa conversa existe E pertence a esse dispositivo — evita
-    que um dispositivo acesse/edite conversas de outro só sabendo o id."""
     conn = get_conn()
     row = conn.execute(
         "SELECT device_id FROM conversas WHERE id = ?", (conv_id,)
@@ -242,7 +261,6 @@ def alternar_fixado(conv_id):
 
 
 def atualizar_titulo_se_necessario(conv_id, primeira_mensagem):
-    """Na primeira mensagem de uma conversa, gera um título curto a partir dela."""
     titulo = primeira_mensagem.strip().replace("\n", " ")
     if len(titulo) > 42:
         titulo = titulo[:42].rstrip() + "..."
@@ -289,9 +307,6 @@ def salvar_mensagem(conv_id, role, content):
 
 
 def truncar_a_partir_de(msg_id, device_id):
-    """Apaga a mensagem msg_id e tudo que veio depois dela na mesma conversa
-    (usado quando o usuário edita uma mensagem antiga). Só executa se a
-    conversa pertencer a esse dispositivo."""
     conn = get_conn()
     row = conn.execute("SELECT conversation_id FROM mensagens WHERE id = ?", (msg_id,)).fetchone()
     if not row:
@@ -349,8 +364,6 @@ def preparar_historico_para_api(historico_completo):
 
 def classify_intent(user_input):
     user_lower = user_input.lower()
-    # Ordem importa: youtube/google/pesquisar são verificados ANTES de
-    # 'abrir_programa', senão "abra o youtube" seria confundido com abrir um app.
     patterns = {
         "pesquisar": [r"\b(pesquise?|busque|google|youtube)\b"],
         "abrir_programa": [r"\b(abra?|abre|me abre|abrir|open)\b\s+(?:o|a|os|as)?\s*(.+)"],
@@ -373,9 +386,6 @@ _REGEX_PREENCHIMENTO = re.compile(
 
 
 def limpar_alvo_programa(texto):
-    """Remove frases de preenchimento do final (ex: 'pra mim', 'por favor'),
-    repetidamente, até não sobrar nenhuma — assim 'whatsapp pra mim por favor'
-    vira só 'whatsapp'."""
     anterior = None
     while anterior != texto:
         anterior = texto
@@ -393,17 +403,7 @@ def resposta_local(intent, user_input):
         if match:
             alvo_bruto = limpar_alvo_programa(match.group(1).strip().rstrip(".!? "))
             if alvo_bruto:
-                resultado = abrir_programa(alvo_bruto)
-                if resultado == "known":
-                    return f"Abrindo {alvo_bruto} para você, querido. ✨", []
-                if resultado == "attempted":
-                    return (
-                        f"Tentando abrir \"{alvo_bruto}\", querido. Se não abrir nada, "
-                        "esse programa pode não estar instalado ou não estar no PATH do "
-                        "Windows — nesse caso me diga o nome exato do executável (.exe) "
-                        "que eu tento de novo. 💅"
-                    ), []
-                return f"Não consegui abrir {alvo_bruto}, meu bem.", []
+                return resposta_abrir(alvo_bruto)
 
     if intent == "conversa":
         respostas = {
@@ -421,29 +421,78 @@ def resposta_local(intent, user_input):
     return None
 
 
+def resposta_abrir(alvo_bruto):
+    """Monta a resposta de texto + ações de frontend pra um pedido de 'abrir X'."""
+    resultado = abrir_programa(alvo_bruto)
+    tipo = resultado["tipo"]
+
+    if tipo == "local_ok":
+        return f"Abrindo {alvo_bruto} para você, querido. ✨", []
+
+    if tipo == "local_tentativa":
+        return (
+            f"Tentando abrir \"{alvo_bruto}\", querido. Se não abrir nada, "
+            "esse programa pode não estar instalado ou não estar no PATH do "
+            "Windows — nesse caso me diga o nome exato do executável (.exe) "
+            "que eu tento de novo. 💅"
+        ), []
+
+    if tipo == "local_falhou":
+        return f"Não consegui abrir {alvo_bruto}, meu bem.", []
+
+    if tipo == "web":
+        return (
+            f"Não tenho como abrir programas no seu computador daqui da nuvem, "
+            f"então abri a versão web de {alvo_bruto} pra você. ✨"
+        ), [{"type": "open", "url": resultado["url"]}]
+
+    # sem_opcao: tenta achar o melhor link sobre o assunto como último recurso
+    url_fallback = google_buscar_link(alvo_bruto)
+    if url_fallback:
+        return (
+            f"'{alvo_bruto}' não roda por aqui nem tem versão web que eu conheça, "
+            "mas abri o que encontrei sobre isso. 💋"
+        ), [{"type": "open", "url": url_fallback}]
+
+    url_busca = f"https://www.google.com/search?q={urllib.parse.quote(alvo_bruto)}"
+    return (
+        f"Não consigo abrir '{alvo_bruto}' diretamente daqui, querido — abri uma "
+        "busca sobre isso pra você dar uma olhada."
+    ), [{"type": "open", "url": url_busca}]
+
+
 # ==================== AÇÕES ====================
 
 def abrir_programa(alvo):
-    """Tenta abrir um programa pelo nome. Retorna:
-    'known'     -> nome reconhecido no dicionário PROGRAMAS (alta confiança)
-    'attempted' -> nome desconhecido, tentativa via 'start' (sem garantia)
-    False       -> falhou até para tentar (erro do subprocess)
+    """
+    Tenta 'abrir' um programa. Retorna um dicionário {"tipo": ..., "url": ...}:
+    - "local_ok"        -> abriu de verdade via subprocess (só funciona rodando localmente)
+    - "local_tentativa" -> tentativa via 'start', sem garantia (só localmente)
+    - "local_falhou"    -> erro ao tentar abrir localmente
+    - "web"             -> na nuvem, achou uma versão web e vai abrir ela no navegador
+    - "sem_opcao"       -> na nuvem, não achou nem versão web pra esse programa
     """
     alvo_lower = alvo.lower().strip()
-    exe = PROGRAMAS.get(alvo_lower)
-    try:
-        if exe:
-            subprocess.Popen(exe, shell=True)
-            return "known"
-        subprocess.Popen(f'start "" "{alvo}"', shell=True)
-        return "attempted"
-    except Exception as e:
-        print(f"[ACAO] Erro ao abrir programa: {e}")
-        return False
+
+    if not RODANDO_NA_NUVEM:
+        exe = PROGRAMAS.get(alvo_lower)
+        try:
+            if exe:
+                subprocess.Popen(exe, shell=True)
+                return {"tipo": "local_ok", "url": None}
+            subprocess.Popen(f'start "" "{alvo}"', shell=True)
+            return {"tipo": "local_tentativa", "url": None}
+        except Exception as e:
+            print(f"[ACAO] Erro ao abrir programa: {e}")
+            return {"tipo": "local_falhou", "url": None}
+
+    url_web = PROGRAMAS_WEB.get(alvo_lower)
+    if url_web:
+        return {"tipo": "web", "url": url_web}
+    return {"tipo": "sem_opcao", "url": None}
 
 
 def parse_tempo(txt):
-    """Converte '0:50', '1:20:05' ou '50' em segundos. Retorna 0 se inválido."""
     txt = (txt or "").strip()
     if not txt:
         return 0
@@ -463,8 +512,6 @@ def parse_tempo(txt):
 
 
 def youtube_buscar_video(query):
-    """Busca o primeiro vídeo pra essa query via YouTube Data API v3.
-    Retorna o video_id, ou None se a chave não estiver configurada ou a busca falhar."""
     if not YOUTUBE_API_KEY:
         return None
     try:
@@ -489,8 +536,6 @@ def youtube_buscar_video(query):
 
 
 def google_buscar_link(query):
-    """Busca o primeiro resultado pra essa query via Google Custom Search API.
-    Retorna a URL, ou None se as chaves não estiverem configuradas ou a busca falhar."""
     if not (GOOGLE_CSE_API_KEY and GOOGLE_CSE_ID):
         return None
     try:
@@ -522,16 +567,21 @@ def extrair_acoes_de_url(resposta_ia):
         conteudo = conteudo.strip().strip('"').strip("`")
 
         if tipo in ("run", "abrir", "programa"):
-            abrir_programa(conteudo)
+            resultado = abrir_programa(conteudo)
+            if resultado["tipo"] == "web":
+                acoes_frontend.append({"type": "open", "url": resultado["url"]})
+            elif resultado["tipo"] == "sem_opcao":
+                url_fallback = google_buscar_link(conteudo)
+                if not url_fallback:
+                    url_fallback = f"https://www.google.com/search?q={urllib.parse.quote(conteudo)}"
+                acoes_frontend.append({"type": "open", "url": url_fallback})
         elif tipo in ("youtube", "yt"):
-            import urllib.parse
             if conteudo.lower() in ("", "home", "youtube"):
                 acoes_frontend.append({"type": "open", "url": "https://www.youtube.com"})
             else:
                 url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(conteudo)}"
                 acoes_frontend.append({"type": "open", "url": url})
         elif tipo == "google":
-            import urllib.parse
             if conteudo.lower() in ("", "home", "google"):
                 acoes_frontend.append({"type": "open", "url": "https://www.google.com"})
             else:
@@ -541,7 +591,6 @@ def extrair_acoes_de_url(resposta_ia):
             url = conteudo if conteudo.startswith("http") else f"https://{conteudo}"
             acoes_frontend.append({"type": "open", "url": url})
         elif tipo in ("youtube_video", "youtube_watch", "yt_video"):
-            import urllib.parse
             if "@" in conteudo:
                 query, tempo_str = conteudo.split("@", 1)
             else:
@@ -554,16 +603,11 @@ def extrair_acoes_de_url(resposta_ia):
                 if segundos > 0:
                     url += f"&t={segundos}s"
             else:
-                # Sem YOUTUBE_API_KEY configurada (ou a busca falhou): cai pra
-                # página de resultados normal em vez de abrir um vídeo às ciegas.
                 url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
             acoes_frontend.append({"type": "open", "url": url})
         elif tipo in ("abrirlink", "abrir_link", "link"):
-            import urllib.parse
             url = google_buscar_link(conteudo)
             if not url:
-                # Sem GOOGLE_CSE_API_KEY/GOOGLE_CSE_ID configuradas (ou busca
-                # falhou): cai pra página de resultados normal do Google.
                 url = f"https://www.google.com/search?q={urllib.parse.quote(conteudo)}"
             acoes_frontend.append({"type": "open", "url": url})
 
@@ -581,7 +625,7 @@ def chamar_groq(historico_completo):
     mensagens_api.extend(preparar_historico_para_api(historico_completo))
 
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=mensagens_api,
         temperature=0.8,
         max_tokens=800,
@@ -712,7 +756,6 @@ def api_chat():
             "tokens_limite": estado["tokens_limite"],
         })
 
-    # Gemini primeiro (mais capaz), Groq como reserva se o Gemini falhar.
     engine_usado = "gemini"
     try:
         resposta_ia = chamar_gemini(user_input)
@@ -744,9 +787,6 @@ def api_chat():
 
 @app.route("/api/messages/<int:msg_id>/truncate", methods=["DELETE"])
 def api_truncate_message(msg_id):
-    """Apaga essa mensagem e todas as que vieram depois na mesma conversa.
-    Usado quando o usuário EDITA uma mensagem antiga: a conversa é
-    reconstruída a partir dali com o texto novo (via /api/chat de novo)."""
     data = request.get_json(silent=True) or {}
     device_id = data.get("device_id") or request.args.get("device_id", "")
     conv_id = truncar_a_partir_de(msg_id, device_id)
@@ -799,8 +839,12 @@ if __name__ == "__main__":
     if not groq_client and not gemini_client:
         print("[AVISO] Nenhuma chave de API configurada. Crie um .env a partir do .env.example.")
 
-    if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
+    if RODANDO_NA_NUVEM:
+        print("[INFO] Detectado ambiente de nuvem (Render). Ações de 'abrir programa' vão usar "
+              "versões web quando disponíveis, em vez de abrir apps locais.")
+
+    if not RODANDO_NA_NUVEM and (os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug):
         threading.Timer(1.2, lambda: webbrowser.open("http://127.0.0.1:5000")).start()
 
-    # host="0.0.0.0" permite acessar de outros dispositivos na mesma rede Wi-Fi (ex: celular)
-    app.run(debug=True, port=5000, host="0.0.0.0")
+    porta = int(os.environ.get("PORT", 5000))
+    app.run(debug=not RODANDO_NA_NUVEM, port=porta, host="0.0.0.0")
