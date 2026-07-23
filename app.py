@@ -511,7 +511,36 @@ def parse_tempo(txt):
         return 0
 
 
-def youtube_buscar_video(query):
+def youtube_buscar_video_scraping(query):
+    """Busca o primeiro vídeo pra essa query 'raspando' a página de resultados
+    do YouTube — não precisa de chave de API nenhuma. Menos garantido que a
+    API oficial (depende da estrutura da página do YouTube), mas funciona na
+    grande maioria das vezes e não tem cota/limite de uso."""
+    try:
+        resp = requests.get(
+            "https://www.youtube.com/results",
+            params={"search_query": query},
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Accept-Language": "pt-BR,pt;q=0.9",
+            },
+            timeout=6,
+        )
+        # O primeiro videoId que aparece no HTML da página de resultados
+        # corresponde ao primeiro vídeo listado.
+        match = re.search(r'"videoId":"([a-zA-Z0-9_-]{11})"', resp.text)
+        if match:
+            return match.group(1)
+    except Exception as e:
+        print(f"[YOUTUBE][scraping] erro na busca: {e}")
+    return None
+
+
+def youtube_buscar_video_api(query):
+    """Busca o primeiro vídeo via YouTube Data API v3 (precisa de YOUTUBE_API_KEY)."""
     if not YOUTUBE_API_KEY:
         return None
     try:
@@ -531,8 +560,17 @@ def youtube_buscar_video(query):
         if items:
             return items[0]["id"]["videoId"]
     except Exception as e:
-        print(f"[YOUTUBE] erro na busca: {e}")
+        print(f"[YOUTUBE][api] erro na busca: {e}")
     return None
+
+
+def youtube_buscar_video(query):
+    """Tenta scraping primeiro (sem precisar de chave); se falhar e houver
+    YOUTUBE_API_KEY configurada, usa a API oficial como reserva."""
+    video_id = youtube_buscar_video_scraping(query)
+    if video_id:
+        return video_id
+    return youtube_buscar_video_api(query)
 
 
 def google_buscar_link(query):
